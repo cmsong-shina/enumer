@@ -49,6 +49,8 @@ type generateOptions struct {
 	includeSQL          bool
 	includeText         bool
 	includeGQLGen       bool
+	generateOpenAPI     string
+	generateOAPICodeGen bool
 	transformMethod     string
 	trimPrefix          string
 	addPrefix           string
@@ -74,6 +76,8 @@ func init() {
 	flag.BoolVar(&opts.includeYAML, "yaml", false, "if true, yaml marshaling methods will be generated. Default: false")
 	flag.BoolVar(&opts.includeText, "text", false, "if true, text marshaling methods will be generated. Default: false")
 	flag.BoolVar(&opts.includeGQLGen, "gqlgen", false, "if true, GraphQL marshaling methods for gqlgen will be generated. Default: false")
+	flag.StringVar(&opts.generateOpenAPI, "openapi-out", "", "output path for OpenAPI YAML schema file. Enables OpenAPI output.")
+	flag.BoolVar(&opts.generateOAPICodeGen, "openapi-codegen", false, "include x-go-type and x-go-type-import extensions in OpenAPI output (requires -openapi-out)")
 	flag.BoolVar(&opts.includeValuesMethod, "values", false, "if true, alternative string values method will be generated. Default: false")
 	flag.BoolVar(&opts.includeFlagMethods, "flag.value", false, "if true, ensure that the enumeration type implements stdlib flag.Value interface. Default: false")
 	flag.BoolVar(&opts.includePflagMethods, "pflag.value", false, "if true, ensure that the enumeration type implements pflag.Value interface, see: https://pkg.go.dev/github.com/spf13/pflag#Value  Default: false")
@@ -107,6 +111,9 @@ func main() {
 	if len(typeNames) == 0 {
 		flag.Usage()
 		os.Exit(2)
+	}
+	if opts.generateOAPICodeGen && opts.generateOpenAPI == "" {
+		log.Fatal("-openapi-codegen requires -openapi-out to be set")
 	}
 	typs := strings.Split(typeNames, ",")
 
@@ -193,6 +200,35 @@ func main() {
 	if err != nil {
 		log.Fatalf("moving tempfile to output file: %s", err)
 	}
+
+	// Write OpenAPI YAML if requested
+	if opts.generateOpenAPI != "" {
+		yamlContent := g.generateOpenAPIYAML(opts.generateOAPICodeGen)
+
+		openapiDir := filepath.Dir(opts.generateOpenAPI)
+		if openapiDir != "" && openapiDir != "." {
+			if err := os.MkdirAll(openapiDir, 0755); err != nil {
+				log.Fatalf("creating directory for OpenAPI output: %s", err)
+			}
+		}
+
+		tmpFile, err := os.CreateTemp(openapiDir, "openapi_")
+		if err != nil {
+			log.Fatalf("creating temporary file for OpenAPI output: %s", err)
+		}
+		_, err = tmpFile.Write(yamlContent)
+		if err != nil {
+			tmpFile.Close()
+			os.Remove(tmpFile.Name())
+			log.Fatalf("writing OpenAPI output: %s", err)
+		}
+		tmpFile.Close()
+
+		err = os.Rename(tmpFile.Name(), opts.generateOpenAPI)
+		if err != nil {
+			log.Fatalf("moving tempfile to OpenAPI output file: %s", err)
+		}
+	}
 }
 
 // isDirectory reports whether the named file is a directory.
@@ -207,8 +243,9 @@ func isDirectory(name string) bool {
 // Generator holds the state of the analysis. Primarily used to buffer
 // the output for format.Source.
 type Generator struct {
-	buf bytes.Buffer // Accumulated output.
-	pkg *Package     // Package we are scanning.
+	buf          bytes.Buffer      // Accumulated output.
+	pkg          *Package          // Package we are scanning.
+	openAPITypes []openAPITypeInfo // Collected enum info for OpenAPI output.
 }
 
 // Printf prints the string to the output
@@ -292,9 +329,10 @@ func (g *Generator) parsePackage(patterns []string, tags []string) {
 // addPackage adds a type checked Package and its syntax files to the generator.
 func (g *Generator) addPackage(pkg *packages.Package) {
 	g.pkg = &Package{
-		name:  pkg.Name,
-		defs:  pkg.TypesInfo.Defs,
-		files: make([]*File, len(pkg.Syntax)),
+		name:     pkg.Name,
+		defs:     pkg.TypesInfo.Defs,
+		files:    make([]*File, len(pkg.Syntax)),
+		typesPkg: pkg.Types,
 	}
 
 	for i, file := range pkg.Syntax {
@@ -466,6 +504,7 @@ func (g *Generator) generate(typeName string, opts generateOptions) {
 	g.prefixValueNames(values, opts.addPrefix)
 
 	runs := splitIntoRuns(values)
+
 	// The decision of which pattern to use depends on the number of
 	// runs in the numbers. If there's only one, it's easy. For more than
 	// one, there's a tradeoff between complexity and size of the data
@@ -508,6 +547,18 @@ func (g *Generator) generate(typeName string, opts generateOptions) {
 	}
 	if opts.includeGQLGen {
 		g.buildGQLGenMethods(runs, typeName)
+	}
+	if opts.generateOpenAPI != "" {
+		var names []string
+		for _, run := range runs {
+			for _, v := range run {
+				names = append(names, v.name)
+			}
+		}
+		g.openAPITypes = append(g.openAPITypes, openAPITypeInfo{
+			typeName: typeName,
+			values:   names,
+		})
 	}
 	if opts.includePflagMethods {
 		g.buildPflagMethods(runs, typeName, runsThreshold)
