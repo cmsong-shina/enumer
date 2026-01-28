@@ -9,7 +9,7 @@ Expected output:
 
 ```yaml
 type: string
-enum: [stop, horizontal, vertical, all]
+enum: [off, horizontal, vertical, all]
 x-go-type: state.FanOscillationMode
 x-go-type-import:
   path: example.com/enumer-openapi/state
@@ -182,18 +182,6 @@ Result is:
       path: example.com/enumer-openapi/state
       name: state
     ```
-
--   Enum values should be quoted when the `-transform` option is set to `space`.
-
-    ```diff
-     type: string
-    -enum: [off, horizontal, vertical, all]
-    +enum: ["off", "horizontal", "vertical", "all"]
-     x-go-type: state.FanOscillationMode
-     x-go-type-import:
-       path: example.com/enumer-openapi/state
-       name: state
-     ```
 
 -   Switch from string builder to string formatting for better readability and consistency.
 

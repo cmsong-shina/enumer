@@ -200,35 +200,6 @@ func main() {
 	if err != nil {
 		log.Fatalf("moving tempfile to output file: %s", err)
 	}
-
-	// Write OpenAPI YAML if requested
-	if opts.generateOpenAPI != "" {
-		yamlContent := g.generateOpenAPIYAML(opts.generateOAPICodeGen)
-
-		openapiDir := filepath.Dir(opts.generateOpenAPI)
-		if openapiDir != "" && openapiDir != "." {
-			if err := os.MkdirAll(openapiDir, 0755); err != nil {
-				log.Fatalf("creating directory for OpenAPI output: %s", err)
-			}
-		}
-
-		tmpFile, err := os.CreateTemp(openapiDir, "openapi_")
-		if err != nil {
-			log.Fatalf("creating temporary file for OpenAPI output: %s", err)
-		}
-		_, err = tmpFile.Write(yamlContent)
-		if err != nil {
-			tmpFile.Close()
-			os.Remove(tmpFile.Name())
-			log.Fatalf("writing OpenAPI output: %s", err)
-		}
-		tmpFile.Close()
-
-		err = os.Rename(tmpFile.Name(), opts.generateOpenAPI)
-		if err != nil {
-			log.Fatalf("moving tempfile to OpenAPI output file: %s", err)
-		}
-	}
 }
 
 // isDirectory reports whether the named file is a directory.
@@ -243,9 +214,8 @@ func isDirectory(name string) bool {
 // Generator holds the state of the analysis. Primarily used to buffer
 // the output for format.Source.
 type Generator struct {
-	buf          bytes.Buffer      // Accumulated output.
-	pkg          *Package          // Package we are scanning.
-	openAPITypes []openAPITypeInfo // Collected enum info for OpenAPI output.
+	buf bytes.Buffer // Accumulated output.
+	pkg *Package     // Package we are scanning.
 }
 
 // Printf prints the string to the output
@@ -504,7 +474,6 @@ func (g *Generator) generate(typeName string, opts generateOptions) {
 	g.prefixValueNames(values, opts.addPrefix)
 
 	runs := splitIntoRuns(values)
-
 	// The decision of which pattern to use depends on the number of
 	// runs in the numbers. If there's only one, it's easy. For more than
 	// one, there's a tradeoff between complexity and size of the data
@@ -549,16 +518,7 @@ func (g *Generator) generate(typeName string, opts generateOptions) {
 		g.buildGQLGenMethods(runs, typeName)
 	}
 	if opts.generateOpenAPI != "" {
-		var names []string
-		for _, run := range runs {
-			for _, v := range run {
-				names = append(names, v.name)
-			}
-		}
-		g.openAPITypes = append(g.openAPITypes, openAPITypeInfo{
-			typeName: typeName,
-			values:   names,
-		})
+		g.generateOpenAPIYAML(values, typeName, opts.generateOpenAPI, opts.generateOAPICodeGen)
 	}
 	if opts.includePflagMethods {
 		g.buildPflagMethods(runs, typeName, runsThreshold)
